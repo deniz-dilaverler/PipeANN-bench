@@ -1,5 +1,6 @@
 #include <cstring>
 #include <iomanip>
+#include <map>
 #include <omp.h>
 #include <ssd_index.h>
 #include <string.h>
@@ -110,6 +111,7 @@ int search_disk_index(int argc, char **argv) {
     if (search_mode == SearchMode::PIPE_SEARCH) {
 #pragma omp parallel for schedule(dynamic, 1)
       for (int64_t i = 0; i < (int64_t) query_num; i++) {
+        stats[i].thread_id = omp_get_thread_num();
         _pFlashIndex->pipe_search(query + (i * query_dim), (uint64_t) recall_at, mem_L, (uint64_t) L,
                                   query_result_tags_32.data() + (i * recall_at),
                                   query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth,
@@ -118,6 +120,7 @@ int search_disk_index(int argc, char **argv) {
     } else if (search_mode == SearchMode::PAGE_SEARCH) {
 #pragma omp parallel for schedule(dynamic, 1)
       for (int64_t i = 0; i < (int64_t) query_num; i++) {
+        stats[i].thread_id = omp_get_thread_num();
         _pFlashIndex->page_search(query + (i * query_dim), (uint64_t) recall_at, mem_L, (uint64_t) L,
                                   query_result_tags_32.data() + (i * recall_at),
                                   query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth,
@@ -133,6 +136,7 @@ int search_disk_index(int argc, char **argv) {
       for (int64_t i = 0; i < (int64_t) query_num; i += kBatchSize) {
         N = std::min(kBatchSize, query_num - i);
         for (int v = 0; v < N; ++v) {
+          stats[i + v].thread_id = omp_get_thread_num();
           q[v] = query + ((i + v) * query_dim);
           res_tags[v] = query_result_tags_32.data() + ((i + v) * recall_at);
           res_dists[v] = query_result_dists[test_id].data() + ((i + v) * recall_at);
@@ -144,6 +148,7 @@ int search_disk_index(int argc, char **argv) {
     } else if (search_mode == SearchMode::BEAM_SEARCH) {
 #pragma omp parallel for schedule(dynamic, 1)
       for (int64_t i = 0; i < (int64_t) query_num; i++) {
+        stats[i].thread_id = omp_get_thread_num();
         _pFlashIndex->beam_search(query + (i * query_dim), (uint64_t) recall_at, mem_L, (uint64_t) L,
                                   query_result_tags_32.data() + (i * recall_at),
                                   query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth, stats + i,
@@ -173,8 +178,6 @@ int search_disk_index(int argc, char **argv) {
     float mean_ios =
         (float) pipeann::get_mean_stats(stats, query_num, [](const pipeann::QueryStats &stats) { return stats.n_ios; });
 
-    delete[] stats;
-
     if (output) {
       float recall = 0;
       if (calc_recall_flag) {
@@ -190,8 +193,36 @@ int search_disk_index(int argc, char **argv) {
                 << mean_ios;
       if (calc_recall_flag) {
         std::cout << std::setw(12) << recall << std::endl;
+      } else {
+        std::cout << std::endl;
       }
+
+      std::map<uint32_t, std::vector<pipeann::QueryStats>> thread_stats;
+      for (size_t i = 0; i < query_num; ++i) {
+        thread_stats[stats[i].thread_id].push_back(stats[i]);
+      }
+      std::cout << "\n  --- Per-Thread Statistics (L=" << L << ") ---" << std::endl;
+      std::cout << "  " << std::setw(10) << "Thread ID" << std::setw(15) << "Num Queries"
+                << std::setw(12) << "AvgLat(us)" << std::setw(12) << "P999 Lat"
+                << std::setw(12) << "Mean Hops" << std::setw(12) << "Mean IOs" << std::endl;
+      for (auto& [tid, t_stats] : thread_stats) {
+        float t_mean_latency = (float) pipeann::get_mean_stats(
+            t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.total_us; });
+        float t_latency_999 = (float) pipeann::get_percentile_stats(
+            t_stats.data(), t_stats.size(), 0.999f, [](const pipeann::QueryStats &s) { return s.total_us; });
+        float t_mean_hops = (float) pipeann::get_mean_stats(
+            t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.n_hops; });
+        float t_mean_ios = (float) pipeann::get_mean_stats(
+            t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.n_ios; });
+
+        std::cout << "  " << std::setw(10) << tid << std::setw(15) << t_stats.size()
+                  << std::setw(12) << t_mean_latency << std::setw(12) << t_latency_999
+                  << std::setw(12) << t_mean_hops << std::setw(12) << t_mean_ios << std::endl;
+      }
+      std::cout << "  --------------------------------------------------------------------------\n" << std::endl;
     }
+
+    delete[] stats;
   };
 
   // LOG(INFO) << "Use two ANNS for warming up...";

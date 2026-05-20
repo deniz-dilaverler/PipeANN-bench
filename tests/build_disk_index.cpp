@@ -42,8 +42,6 @@ int main(int argc, char **argv) {
                                        std::stoi(argv[8]), std::stoi(argv[6]), m, nullptr, nbr_handler, label);
     } else if (std::string(argv[1]) == std::string("int8")) {
       pipeann::AbstractNeighbor<int8_t> *nbr_handler = pipeann::get_nbr_handler<int8_t>(m, nbr_type);
-      pipeann::build_disk_index<int8_t>(argv[2], argv[3], std::stoi(argv[4]), std::stoi(argv[5]), std::stoi(argv[7]),
-                                        std::stoi(argv[8]), std::stoi(argv[6]), m, nullptr, nbr_handler, label);
     } else if (std::string(argv[1]) == std::string("uint8")) {
       pipeann::AbstractNeighbor<uint8_t> *nbr_handler = pipeann::get_nbr_handler<uint8_t>(m, nbr_type);
       pipeann::build_disk_index<uint8_t>(argv[2], argv[3], std::stoi(argv[4]), std::stoi(argv[5]), std::stoi(argv[7]),
