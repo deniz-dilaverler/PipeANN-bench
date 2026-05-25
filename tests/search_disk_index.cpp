@@ -199,30 +199,6 @@ int search_disk_index(int argc, char **argv) {
       } else {
         std::cout << std::endl;
       }
-
-      std::map<uint32_t, std::vector<pipeann::QueryStats>> thread_stats;
-      for (size_t i = 0; i < query_num; ++i) {
-        thread_stats[stats[i].thread_id].push_back(stats[i]);
-      }
-      std::cout << "\n  --- Per-Thread Statistics (L=" << L << ") ---" << std::endl;
-      std::cout << "  " << std::setw(10) << "Thread ID" << std::setw(15) << "Num Queries"
-                << std::setw(12) << "AvgLat(us)" << std::setw(12) << "P99 Lat"
-                << std::setw(15) << "AvgIOLat(us)" << std::setw(15) << "P99 IOLat" << std::endl;
-      for (auto& [tid, t_stats] : thread_stats) {
-        float t_mean_latency = (float) pipeann::get_mean_stats(
-            t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.total_us; });
-        float t_latency_99 = (float) pipeann::get_percentile_stats(
-            t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; });
-        float t_mean_io_latency = (float) pipeann::get_mean_stats(
-            t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.io_us; });
-        float t_latency_io_99 = (float) pipeann::get_percentile_stats(
-            t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.io_us; });
-
-        // std::cout << "  " << std::setw(10) << tid << std::setw(15) << t_stats.size()
-        //          << std::setw(12) << t_mean_latency << std::setw(12) << t_latency_99
-        //          << std::setw(15) << t_mean_io_latency << std::setw(15) << t_latency_io_99 << std::endl;
-      }
-      std::cout << "  --------------------------------------------------------------------------\n" << std::endl;
     }
 
     delete[] stats;
