@@ -189,10 +189,10 @@ int search_disk_index(int argc, char **argv) {
     float io_all_99 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us1; });
     float io_all_999 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us1; });
 
-    float cpu_total_mean = (float) pipeann::get_mean_stats(stats, query_num, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
-    float cpu_total_95 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.95f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
-    float cpu_total_99 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
-    float cpu_total_999 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
+    float cpu_total_mean = (float) pipeann::get_mean_stats(stats, query_num, [](const pipeann::QueryStats &s) { return s.cpu_us; });
+    float cpu_total_95 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.95f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us; });
+    float cpu_total_99 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us; });
+    float cpu_total_999 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us; });
 
     float mean_hops = (float) pipeann::get_mean_stats(stats, query_num,
                                                       [](const pipeann::QueryStats &stats) { return stats.n_hops; });
