@@ -209,8 +209,9 @@ int search_disk_index(int argc, char **argv) {
       }
       std::cout << "\n  --- Per-Thread Statistics (L=" << L << ") ---" << std::endl;
       std::cout << "  " << std::setw(10) << "Thread ID" << std::setw(15) << "Num Queries"
-                << std::setw(12) << "AvgLat(us)" << std::setw(12) << "P99 Lat"
-                << std::setw(15) << "AvgIOLat(us)" << std::setw(12) << "P95 IOLat" << std::setw(12) << "P99 IOLat" << std::setw(12) << "P999 IOLat"
+                << std::setw(12) << "AvgLat(us)" << std::setw(14) << "P99 Lat(us)"
+                << std::setw(15) << "Avg(io_sub_us)" << std::setw(15) << "P95(io_sub_us)" << std::setw(15) << "P99(io_sub_us)" << std::setw(16) << "P999(io_sub_us)"
+                << std::setw(16) << "Avg(io_all_us)" << std::setw(16) << "P95(io_all_us)" << std::setw(16) << "P99(io_all_us)" << std::setw(16) << "P999(io_all_us)"
                 << std::setw(15) << "AvgIOCount" << std::setw(12) << "P95 IOCnt" << std::setw(12) << "P99 IOCnt" << std::setw(12) << "P999 IOCnt" << std::endl;
       for (auto& [tid, t_stats] : thread_stats) {
         float t_mean_latency = (float) pipeann::get_mean_stats(
@@ -218,14 +219,23 @@ int search_disk_index(int argc, char **argv) {
         float t_latency_99 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; });
 
-        float t_mean_io_latency = (float) pipeann::get_mean_stats(
+        float t_mean_io_sub = (float) pipeann::get_mean_stats(
             t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.io_us; });
-        float t_latency_io_95 = (float) pipeann::get_percentile_stats(
+        float t_io_sub_95 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.95f, [](const pipeann::QueryStats &s) { return s.io_us; });
-        float t_latency_io_99 = (float) pipeann::get_percentile_stats(
+        float t_io_sub_99 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.io_us; });
-        float t_latency_io_999 = (float) pipeann::get_percentile_stats(
+        float t_io_sub_999 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.999f, [](const pipeann::QueryStats &s) { return s.io_us; });
+
+        float t_mean_io_all = (float) pipeann::get_mean_stats(
+            t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.io_us1; });
+        float t_io_all_95 = (float) pipeann::get_percentile_stats(
+            t_stats.data(), t_stats.size(), 0.95f, [](const pipeann::QueryStats &s) { return s.io_us1; });
+        float t_io_all_99 = (float) pipeann::get_percentile_stats(
+            t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.io_us1; });
+        float t_io_all_999 = (float) pipeann::get_percentile_stats(
+            t_stats.data(), t_stats.size(), 0.999f, [](const pipeann::QueryStats &s) { return s.io_us1; });
 
         float t_mean_io_count = (float) pipeann::get_mean_stats(
             t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.n_ios; });
@@ -237,8 +247,9 @@ int search_disk_index(int argc, char **argv) {
             t_stats.data(), t_stats.size(), 0.999f, [](const pipeann::QueryStats &s) { return s.n_ios; });
 
         std::cout << "  " << std::setw(10) << tid << std::setw(15) << t_stats.size()
-                  << std::setw(12) << t_mean_latency << std::setw(12) << t_latency_99
-                  << std::setw(15) << t_mean_io_latency << std::setw(12) << t_latency_io_95 << std::setw(12) << t_latency_io_99 << std::setw(12) << t_latency_io_999
+                  << std::setw(12) << t_mean_latency << std::setw(14) << t_latency_99
+                  << std::setw(15) << t_mean_io_sub << std::setw(15) << t_io_sub_95 << std::setw(15) << t_io_sub_99 << std::setw(16) << t_io_sub_999
+                  << std::setw(16) << t_mean_io_all << std::setw(16) << t_io_all_95 << std::setw(16) << t_io_all_99 << std::setw(16) << t_io_all_999
                   << std::setw(15) << t_mean_io_count << std::setw(12) << t_io_count_95 << std::setw(12) << t_io_count_99 << std::setw(12) << t_io_count_999 << std::endl;
       }
       std::cout << "  --------------------------------------------------------------------------\n" << std::endl;

@@ -350,7 +350,7 @@ namespace pipeann {
         send_best_read_req(1);
       }
       auto io1_ed = std::chrono::high_resolution_clock::now();
-      if (stats != nullptr) stats->io_us += std::chrono::duration_cast<std::chrono::microseconds>(io1_ed - io1_st).count();
+      if (stats != nullptr) stats->io_us1 += std::chrono::duration_cast<std::chrono::microseconds>(io1_ed - io1_st).count();
       marker = calc_best_node();
       max_marker = std::max(max_marker, marker);
     }
