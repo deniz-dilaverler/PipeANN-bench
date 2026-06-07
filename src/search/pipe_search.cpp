@@ -111,7 +111,7 @@ namespace pipeann {
 
       n_computes += nbors_cand_size;
       if (nbors_cand_size) {
-        // auto cpu1_st = std::chrono::high_resolution_clock::now();
+        auto cpu1_st = std::chrono::high_resolution_clock::now();
         nbr_handler->compute_dists(query_buf, node.nbrs, nbors_cand_size);
         for (unsigned m = 0; m < nbors_cand_size; ++m) {
           const int nbor_id = node.nbrs[m];
@@ -136,8 +136,8 @@ namespace pipeann {
           if (r < nk)
             nk = r;
         }
-        // auto cpu1_ed = std::chrono::high_resolution_clock::now();
-        // stats->cpu_us1 += std::chrono::duration_cast<std::chrono::microseconds>(cpu1_ed - cpu1_st).count();
+        auto cpu1_ed = std::chrono::high_resolution_clock::now();
+        if (stats != nullptr) stats->cpu_us1 += std::chrono::duration_cast<std::chrono::microseconds>(cpu1_ed - cpu1_st).count();
       }
     };
 
@@ -155,6 +155,7 @@ namespace pipeann {
       stats->cpu_us = 0;
       stats->cpu_us1 = 0;
       stats->cpu_us2 = 0;
+      stats->head_us = 0;
     }
     // search in in-memory index.
 
@@ -164,7 +165,10 @@ namespace pipeann {
 
 #ifdef OVERLAP_INIT
     if (mem_L) {
+      auto head_st = std::chrono::high_resolution_clock::now();
       mem_index_->search_with_tags_fast(query, mem_L, mem_tags.data(), mem_dists.data());
+      auto head_ed = std::chrono::high_resolution_clock::now();
+      if (stats != nullptr) stats->head_us += std::chrono::duration_cast<std::chrono::microseconds>(head_ed - head_st).count();
       add_to_retset(mem_tags.data(), std::min((uint64_t) mem_L, l_search), mem_dists.data());
     } else {
       // cannot overlap.
@@ -174,7 +178,10 @@ namespace pipeann {
     }
 #else
     if (mem_L) {
+      auto head_st = std::chrono::high_resolution_clock::now();
       mem_index_->search_with_tags_fast(query, mem_L, mem_tags.data(), mem_dists.data());
+      auto head_ed = std::chrono::high_resolution_clock::now();
+      if (stats != nullptr) stats->head_us += std::chrono::duration_cast<std::chrono::microseconds>(head_ed - head_st).count();
       nbr_handler->compute_dists(query_buf, mem_tags.data(), mem_L);
       add_to_retset(mem_tags.data(), std::min((uint64_t) mem_L, l_search), dist_scratch);
     } else {
@@ -245,7 +252,7 @@ namespace pipeann {
     };
 
     auto calc_best_node = [&]() -> int {  // if converged.
-      // auto cpu_st = std::chrono::high_resolution_clock::now();
+      auto cpu_st = std::chrono::high_resolution_clock::now();
       unsigned marker = 0, nk = cur_list_size, first_unvisited_eager = cur_list_size;
       /* calculate one from "already read" */
       for (marker = 0; marker < cur_list_size; ++marker) {
@@ -268,9 +275,9 @@ namespace pipeann {
           break;
         }
       }
+      auto cpu_ed = std::chrono::high_resolution_clock::now();
+      if (stats != nullptr) stats->cpu_us += std::chrono::duration_cast<std::chrono::microseconds>(cpu_ed - cpu_st).count();
       return first_unvisited_eager;
-      // auto cpu_ed = std::chrono::high_resolution_clock::now();
-      // stats->cpu_us += std::chrono::duration_cast<std::chrono::microseconds>(cpu_ed - cpu_st).count();
     };
 
     auto get_first_unvisited = [&]() -> int {
@@ -380,7 +387,6 @@ namespace pipeann {
     auto cpu2_ed = std::chrono::high_resolution_clock::now();
     if (stats != nullptr) {
       stats->cpu_us2 = std::chrono::duration_cast<std::chrono::microseconds>(cpu2_ed - cpu2_st).count();
-      stats->cpu_us = n_computes;
     }
     std::sort(full_retset.begin(), full_retset.end(),
               [](const Neighbor &left, const Neighbor &right) { return left < right; });
