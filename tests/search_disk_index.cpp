@@ -180,16 +180,19 @@ int search_disk_index(int argc, char **argv) {
         stats, query_num, 0.99f, [](const pipeann::QueryStats &stats) { return stats.total_us; });
 
     float io_sub_mean = (float) pipeann::get_mean_stats(stats, query_num, [](const pipeann::QueryStats &s) { return s.io_us; });
-    float io_sub_95 = (float) pipeann::get_percentile_stats(stats, query_num, 0.95f, [](const pipeann::QueryStats &s) { return s.io_us; });
-    float io_sub_99 = (float) pipeann::get_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.io_us; });
-    float io_sub_999 = (float) pipeann::get_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.io_us; });
+    float io_sub_95 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.95f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us; });
+    float io_sub_99 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us; });
+    float io_sub_999 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us; });
 
     float io_all_mean = (float) pipeann::get_mean_stats(stats, query_num, [](const pipeann::QueryStats &s) { return s.io_us1; });
-    float io_all_95 = (float) pipeann::get_percentile_stats(stats, query_num, 0.95f, [](const pipeann::QueryStats &s) { return s.io_us1; });
-    float io_all_99 = (float) pipeann::get_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.io_us1; });
-    float io_all_999 = (float) pipeann::get_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.io_us1; });
+    float io_all_95 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.95f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us1; });
+    float io_all_99 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us1; });
+    float io_all_999 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.io_us1; });
 
-    float cpu_total_mean = (float) pipeann::get_mean_stats(stats, query_num, [](const pipeann::QueryStats &s) { return s.head_us + s.cpu_us; });
+    float cpu_total_mean = (float) pipeann::get_mean_stats(stats, query_num, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
+    float cpu_total_95 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.95f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
+    float cpu_total_99 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
+    float cpu_total_999 = (float) pipeann::get_correlated_percentile_stats(stats, query_num, 0.999f, [](const pipeann::QueryStats &s) { return s.total_us; }, [](const pipeann::QueryStats &s) { return s.cpu_us + s.cpu_us1 + s.cpu_us2; });
 
     float mean_hops = (float) pipeann::get_mean_stats(stats, query_num,
                                                       [](const pipeann::QueryStats &stats) { return stats.n_hops; });
@@ -211,7 +214,7 @@ int search_disk_index(int argc, char **argv) {
                 << mean_latency << std::setw(12) << latency_95 << std::setw(12) << latency_99 << std::setw(12) << latency_999 
                 << std::setw(15) << io_sub_mean << std::setw(15) << io_sub_95 << std::setw(15) << io_sub_99 << std::setw(16) << io_sub_999
                 << std::setw(16) << io_all_mean << std::setw(15) << io_all_95 << std::setw(15) << io_all_99 << std::setw(16) << io_all_999
-                << std::setw(12) << cpu_total_mean
+                << std::setw(12) << cpu_total_mean << std::setw(12) << cpu_total_95 << std::setw(12) << cpu_total_99 << std::setw(12) << cpu_total_999
                 << std::setw(12) << mean_hops << std::setw(12) << mean_ios;
       if (calc_recall_flag) {
         std::cout << std::setw(12) << recall << std::endl;
@@ -239,7 +242,7 @@ int search_disk_index(int argc, char **argv) {
             << "AvgLat(us)" << std::setw(12) << "P95 Lat" << std::setw(12) << "P99 Lat" << std::setw(12) << "P99.9 Lat"
             << std::setw(15) << "Avg(io_sub_us)" << std::setw(15) << "P95(io_sub)" << std::setw(15) << "P99(io_sub)" << std::setw(16) << "P999(io_sub)"
             << std::setw(16) << "Avg(io_all_us)" << std::setw(15) << "P95(io_all)" << std::setw(15) << "P99(io_all)" << std::setw(16) << "P999(io_all)"
-            << std::setw(12) << "TotalCPU"
+            << std::setw(12) << "Avg(CPU)" << std::setw(12) << "P95(CPU)" << std::setw(12) << "P99(CPU)" << std::setw(12) << "P999(CPU)"
             << std::setw(12) << "Mean Hops" << std::setw(12) << "Mean IOs"
             << std::setw(12);
   if (calc_recall_flag) {

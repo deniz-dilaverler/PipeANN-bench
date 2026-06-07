@@ -40,6 +40,16 @@ namespace pipeann {
     return retval;
   }
 
+  inline double get_correlated_percentile_stats(QueryStats *stats, uint64_t len, float percentile,
+                                                const std::function<double(const QueryStats &)> &sort_fn,
+                                                const std::function<double(const QueryStats &)> &member_fn) {
+    std::vector<QueryStats> vals(stats, stats + len);
+    std::sort(vals.begin(), vals.end(), [&](const QueryStats &left, const QueryStats &right) {
+      return sort_fn(left) < sort_fn(right);
+    });
+    return member_fn(vals[(uint64_t) (percentile * ((float) len))]);
+  }
+
   inline double get_mean_stats(QueryStats *stats, uint64_t len,
                                const std::function<double(const QueryStats &)> &member_fn) {
     double avg = 0;
