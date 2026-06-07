@@ -225,7 +225,7 @@ namespace pipeann {
     };
 
     auto send_best_read_req = [&](uint32_t n) -> bool {
-      // auto io_st = std::chrono::high_resolution_clock::now();
+      auto io_st = std::chrono::high_resolution_clock::now();
       unsigned n_sent = 0, marker = 0;
       while (marker < cur_list_size && n_sent < n) {
         while (marker < cur_list_size /* pool size */ &&
@@ -239,8 +239,8 @@ namespace pipeann {
         }
         n_sent += send_read_req(retset[marker]);
       }
-      // auto io_ed = std::chrono::high_resolution_clock::now();
-      // stats->io_us += std::chrono::duration_cast<std::chrono::microseconds>(io_ed - io_st).count();
+      auto io_ed = std::chrono::high_resolution_clock::now();
+      if (stats != nullptr) stats->io_us += std::chrono::duration_cast<std::chrono::microseconds>(io_ed - io_st).count();
       return n_sent != 0;  // nothing to send.
     };
 
@@ -318,7 +318,7 @@ namespace pipeann {
     int cur_n_in = 0, cur_tot = 0;
     while (get_first_unvisited() != -1) {
       // poll to heap (best-effort) -> calc best from heap (skip if heap is empty) -> send IO (if can send) -> ...
-      // auto io1_st = std::chrono::high_resolution_clock::now();
+      auto io1_st = std::chrono::high_resolution_clock::now();
       auto [n_in, n_out] = poll_all();
       std::ignore = n_in;
       std::ignore = n_out;
@@ -349,8 +349,8 @@ namespace pipeann {
       if ((int64_t) on_flight_ios.size() < cur_beam_width) {
         send_best_read_req(1);
       }
-      // auto io1_ed = std::chrono::high_resolution_clock::now();
-      // stats->io_us1 += std::chrono::duration_cast<std::chrono::microseconds>(io1_ed - io1_st).count();
+      auto io1_ed = std::chrono::high_resolution_clock::now();
+      if (stats != nullptr) stats->io_us += std::chrono::duration_cast<std::chrono::microseconds>(io1_ed - io1_st).count();
       marker = calc_best_node();
       max_marker = std::max(max_marker, marker);
     }
