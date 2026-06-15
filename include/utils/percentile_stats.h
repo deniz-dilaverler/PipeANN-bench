@@ -11,6 +11,7 @@ namespace pipeann {
     double n_8k = 0;            // # of 8kB reads
     double n_12k = 0;           // # of 12kB reads
     double n_ios = 0;           // total # of IOs issued
+    double n_polls = 0;         // # of poll calls
     double read_size = 0;       // total # of bytes read
     double io_us = 0;           // total time spent in IO
     double io_us1 = 0;          // total time spent in IO
