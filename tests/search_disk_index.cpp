@@ -1,4 +1,5 @@
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <omp.h>
 #include <ssd_index.h>
@@ -46,6 +47,8 @@ int search_disk_index(int argc, char **argv) {
   std::string disk_index_tag_file = index_prefix_path + "_disk.index.tags";
 
   bool calc_recall_flag = false;
+
+  std::string csv_output_file = "results_threads" + std::to_string(num_threads) + "_width" + std::to_string(beamwidth) + ".csv";
 
   for (int ctr = index; ctr < argc; ctr++) {
     uint64_t curL = std::atoi(argv[ctr]);
@@ -223,6 +226,30 @@ int search_disk_index(int argc, char **argv) {
       }
     }
 
+    if (!csv_output_file.empty()) {
+      std::ofstream csv(csv_output_file, std::ios::app);
+      if (test_id == 0) {
+        csv << "L,QueryID,Rank,Tag,Distance,total_us,n_4k,n_8k,n_12k,n_ios,n_polls,read_size,io_us,io_us1,head_us,cpu_us,cpu_us1,cpu_us2,n_cmps_saved,n_cmps,n_cache_hits,n_hops,n_current_used,thread_id\n";
+      }
+      for (uint64_t i = 0; i < query_num; i++) {
+        for (uint64_t j = 0; j < recall_at; j++) {
+          uint64_t idx = i * recall_at + j;
+          csv << L << "," << i << "," << j << ","
+              << query_result_tags[test_id][idx] << ","
+              << std::fixed << std::setprecision(6) << query_result_dists[test_id][idx] << ","
+              << stats[i].total_us << ","
+              << stats[i].n_4k << "," << stats[i].n_8k << "," << stats[i].n_12k << ","
+              << stats[i].n_ios << "," << stats[i].n_polls << "," << stats[i].read_size << ","
+              << stats[i].io_us << "," << stats[i].io_us1 << "," << stats[i].head_us << ","
+              << stats[i].cpu_us << "," << stats[i].cpu_us1 << "," << stats[i].cpu_us2 << ","
+              << stats[i].n_cmps_saved << "," << stats[i].n_cmps << "," << stats[i].n_cache_hits << ","
+              << stats[i].n_hops << "," << stats[i].n_current_used << ","
+              << stats[i].thread_id << "\n";
+        }
+      }
+      csv.close();
+    }
+
     delete[] stats;
   };
 
@@ -251,6 +278,11 @@ int search_disk_index(int argc, char **argv) {
     std::cout << std::endl;
   std::cout << "========================================================================================================================================================================================================================================================================="
             << std::endl;
+
+  if (!csv_output_file.empty()) {
+    std::ofstream csv(csv_output_file, std::ios::trunc);
+    csv.close();
+  }
 
   for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++) {
     run_tests(test_id, true);
