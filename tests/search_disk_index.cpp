@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include <iomanip>
+#include <fstream>
 
 #include "utils/log.h"
 #include "nbr/nbr.h"
@@ -254,6 +255,33 @@ int search_disk_index(int argc, char **argv) {
       }
       std::cout << "  --------------------------------------------------------------------------\n" << std::endl;
     }
+
+    std::string csv_filename = "query_stats_L" + std::to_string(L) + ".csv";
+    std::ofstream csv_file(csv_filename);
+    csv_file << "query_id,total_us,n_4k,n_8k,n_12k,n_ios,n_polls,read_size,io_us,io_us1,head_us,cpu_us,cpu_us1,cpu_us2,n_cmps_saved,n_cmps,n_cache_hits,n_hops,n_current_used,thread_id" << std::endl;
+    for (size_t i = 0; i < query_num; ++i) {
+      csv_file << i << ","
+               << stats[i].total_us << ","
+               << stats[i].n_4k << ","
+               << stats[i].n_8k << ","
+               << stats[i].n_12k << ","
+               << stats[i].n_ios << ","
+               << stats[i].n_polls << ","
+               << stats[i].read_size << ","
+               << stats[i].io_us << ","
+               << stats[i].io_us1 << ","
+               << stats[i].head_us << ","
+               << stats[i].cpu_us << ","
+               << stats[i].cpu_us1 << ","
+               << stats[i].cpu_us2 << ","
+               << stats[i].n_cmps_saved << ","
+               << stats[i].n_cmps << ","
+               << stats[i].n_cache_hits << ","
+               << stats[i].n_hops << ","
+               << stats[i].n_current_used << ","
+               << stats[i].thread_id << std::endl;
+    }
+    csv_file.close();
 
     delete[] stats;
   };
