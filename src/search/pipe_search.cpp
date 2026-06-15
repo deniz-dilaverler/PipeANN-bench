@@ -150,6 +150,7 @@ namespace pipeann {
 
     // stats.
     if (stats != nullptr) {
+      stats->n_polls = 0;
       stats->io_us = 0;
       stats->io_us1 = 0;
       stats->cpu_us = 0;
@@ -218,6 +219,7 @@ namespace pipeann {
     std::unordered_map<unsigned, DiskNode<T>> id_buf_map;
     auto poll_all = [&]() -> std::pair<int, int> {
       // poll once.
+      if (stats != nullptr) stats->n_polls++;
       reader->poll_all(ctx);
       unsigned n_in = 0, n_out = 0;
       while (!on_flight_ios.empty() && on_flight_ios.front().finished()) {
@@ -365,6 +367,7 @@ namespace pipeann {
     // In relaxed_monotonicity mode: drain all on-flight IOs and process remaining nodes
     if (relaxed_monotonicity_l > 0) {
       while (!on_flight_ios.empty()) {
+        if (stats != nullptr) stats->n_polls++;
         reader->poll_all(ctx);
         while (!on_flight_ios.empty() && on_flight_ios.front().finished()) {
           io_t &io = on_flight_ios.front();
