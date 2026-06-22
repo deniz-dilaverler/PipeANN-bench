@@ -258,7 +258,7 @@ int search_disk_index(int argc, char **argv) {
 
     std::string csv_filename = "query_stats_L" + std::to_string(L) + ".csv";
     std::ofstream csv_file(csv_filename);
-    csv_file << "query_id,total_us,n_4k,n_8k,n_12k,n_ios,n_polls,read_size,io_us,io_us1,head_us,cpu_us,cpu_us1,cpu_us2,n_cmps_saved,n_cmps,n_cache_hits,n_hops,n_current_used,thread_id" << std::endl;
+    csv_file << "query_id,total_us,n_4k,n_8k,n_12k,n_ios,n_polls,read_size,io_us,io_us1,head_us,cpu_us,cpu_us1,cpu_us2,n_cmps_saved,n_cmps,n_cache_hits,n_hops,n_current_used,thread_id,converge_io_req_count,sum_converge_beam_width" << std::endl;
     for (size_t i = 0; i < query_num; ++i) {
       csv_file << i << ","
                << stats[i].total_us << ","
@@ -279,7 +279,9 @@ int search_disk_index(int argc, char **argv) {
                << stats[i].n_cache_hits << ","
                << stats[i].n_hops << ","
                << stats[i].n_current_used << ","
-               << stats[i].thread_id << std::endl;
+               << stats[i].thread_id << ","
+               << stats[i].converge_io_req_count << ","
+               << stats[i].sum_converge_beam_width<< "," << std::endl;
     }
     csv_file.close();
 

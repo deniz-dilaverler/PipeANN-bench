@@ -25,6 +25,8 @@ namespace pipeann {
     double n_hops = 0;          // # search hops
     double n_current_used = 0;  // # force return for latency limit
     uint32_t thread_id = 0;     // OpenMP thread ID that processed the query
+    double converge_io_req_count = 0;
+    double sum_converge_beam_width = 0;
   };
 
   inline double get_percentile_stats(QueryStats *stats, uint64_t len, float percentile,

@@ -185,8 +185,10 @@ namespace pipeann {
     std::sort(retset.begin(), retset.begin() + cur_list_size);
 #endif
 
+    unsigned marker = 0, max_marker = 0;
     std::queue<io_t> on_flight_ios;
     auto send_read_req = [&](Neighbor &item) -> bool {
+      uint64_t current_on_flight_before = on_flight_ios.size();
       item.flag = false;
 
       // lock the corresponding page.
@@ -205,6 +207,10 @@ namespace pipeann {
 
       if (stats != nullptr) {
         stats->n_ios++;
+        if (max_marker < 5) {
+          stats->converge_io_req_count++;
+          stats->sum_converge_beam_width += cur_beam_width;
+        }
       }
       return true;
     };
@@ -305,7 +311,7 @@ namespace pipeann {
 
     auto cpu2_st = std::chrono::high_resolution_clock::now();
     send_best_read_req(cur_beam_width - on_flight_ios.size());
-    unsigned marker = 0, max_marker = 0;
+    // marker and max_marker are declared above
 #ifdef OVERLAP_INIT
     if (likely(mem_L != 0)) {
       nbr_handler->initialize_query(query, query_buf);
