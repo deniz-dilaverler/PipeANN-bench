@@ -5,14 +5,14 @@ template<typename T>
 ShardedCache<T>::ShardedCache(size_t num_shards, size_t shard_capacity) : size(num_shards) {
   shards.reserve(num_shards);
   for (size_t i = 0; i < num_shards; i++) {
-    shards.emplace_back(shard_capacity);
+    shards.push_back(std::make_unique<Shard<T>>(shard_capacity));
   }
 }
 
 template<typename T>
 void ShardedCache<T>::put(unsigned node_id, const std::shared_ptr<CacheNode<T>>& node) {
   size_t shard_id = this->get_shard_id(node_id);
-  Shard<T>& shard = shards[shard_id];
+  Shard<T>& shard = *shards[shard_id];
   std::lock_guard<std::mutex> shard_lock(shard.mut);
 
   auto it = shard.map.find(node_id);
@@ -40,7 +40,7 @@ void ShardedCache<T>::put(unsigned node_id, const std::shared_ptr<CacheNode<T>>&
 template<typename T>
 bool ShardedCache<T>::get(uint32_t node_id, std::shared_ptr<CacheNode<T>>& node) {
   size_t shard_id = this->get_shard_id(node_id);
-  Shard<T>& shard = shards[shard_id];
+  Shard<T>& shard = *shards[shard_id];
   std::lock_guard<std::mutex> shard_lock(shard.mut);
 
   auto it = shard.map.find(node_id);
