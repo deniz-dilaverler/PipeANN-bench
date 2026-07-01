@@ -264,6 +264,9 @@ namespace pipeann {
         unsigned node_id = retset[marker].id;
         std::shared_ptr<CacheNode<T>> cached_node;
         if (cache.get(node_id, cached_node)) {
+          if (stats != nullptr) {
+            stats->n_cache_hits++;
+          }
           id_buf_map.insert(std::make_pair(node_id, cached_node));
           retset[marker].flag = false;
           continue;
