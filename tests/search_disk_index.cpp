@@ -7,6 +7,7 @@
 
 #include "utils/log.h"
 #include "nbr/nbr.h"
+#include "utils/sharded_cache.hh"
 #include "utils/timer.h"
 #include "utils.h"
 
@@ -149,7 +150,17 @@ int search_disk_index(int argc, char **argv) {
                                   query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth, stats + i,
                                   nullptr, false);
       }
-    } else {
+    }   else if (search_mode == SearchMode::PIPE_SEARCH_IMPROVED) {
+        ShardedCache<T> cache(16, 1000);
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int64_t i = 0; i < (int64_t) query_num; i++) {
+            _pFlashIndex->pipe_search_improved(query + (i * query_dim), (uint64_t) recall_at, mem_L, (uint64_t) L,
+                                  query_result_tags_32.data() + (i * recall_at),
+                                  query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth,
+                                  cache, stats + i);
+      }
+    }
+    else {
       std::cout << "Unknown search mode: " << search_mode << std::endl;
       exit(-1);
     }
