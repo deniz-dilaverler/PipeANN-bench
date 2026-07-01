@@ -89,65 +89,14 @@ namespace pipeann {
     nbr_handler->initialize_query(query, query_buf);
 #endif
 
-    struct DiskOrCachedNode {
-      bool is_cached;
-      const DiskNode<T> *disk_node;
-      std::shared_ptr<CacheNode<T>> cached_node;
+    std::unordered_map<unsigned, std::shared_ptr<CacheNode<T>>> id_buf_map;
 
-      DiskOrCachedNode(const DiskNode<T> *dn) : is_cached(false), disk_node(dn), cached_node(nullptr) {}
-      DiskOrCachedNode(std::shared_ptr<CacheNode<T>> cn) : is_cached(true), disk_node(nullptr), cached_node(cn) {}
-
-      const T* coords() const {
-        return is_cached ? cached_node->coords.data() : disk_node->coords;
-      }
-
-      uint32_t nnbrs() const {
-        return is_cached ? cached_node->nbrs.size() : disk_node->nnbrs;
-      }
-
-      uint32_t nbr(uint32_t idx) const {
-        return is_cached ? cached_node->nbrs[idx] : disk_node->nbrs[idx];
-      }
-
-      const void* labels() const {
-        return is_cached ? (const void*)cached_node->labels.data() : disk_node->labels;
-      }
-    };
-
-    std::unordered_map<unsigned, DiskNode<T>> id_buf_map;
-    std::unordered_map<unsigned, std::shared_ptr<CacheNode<T>>> id_cache_map;
-
-    auto has_node = [&](unsigned id) {
-      return id_buf_map.find(id) != id_buf_map.end() || id_cache_map.find(id) != id_cache_map.end();
-    };
-
-    auto get_node = [&](unsigned id) -> DiskOrCachedNode {
-      auto it_cache = id_cache_map.find(id);
-      if (it_cache != id_cache_map.end()) {
-        return DiskOrCachedNode(it_cache->second);
-      }
-      auto it_buf = id_buf_map.find(id);
-      return DiskOrCachedNode(&(it_buf->second));
-    };
-
-    auto put_in_cache = [&](unsigned node_id, const DiskNode<T> &node) {
-      auto cache_node = std::make_shared<CacheNode<T>>();
-      cache_node->coords.assign(node.coords, node.coords + meta_.data_dim);
-      cache_node->nbrs.assign(node.nbrs, node.nbrs + node.nnbrs);
-      if (meta_.label_size > 0) {
-        char *lbl_ptr = (char *) node.labels;
-        cache_node->labels.assign(lbl_ptr, lbl_ptr + meta_.label_size);
-      }
-      cache.put(node_id, cache_node);
-      return cache_node;
-    };
-
-    auto compute_exact_dists_and_push = [&](const DiskOrCachedNode &node, const unsigned id) -> float {
+    auto compute_exact_dists_and_push = [&](const std::shared_ptr<CacheNode<T>> &node, const unsigned id) -> float {
       T *node_fp_coords_copy = data_buf;
-      memcpy(node_fp_coords_copy, node.coords(), meta_.data_dim * sizeof(T));
+      memcpy(node_fp_coords_copy, node->coords.data(), meta_.data_dim * sizeof(T));
       float cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy, (unsigned) aligned_dim);
       // Only add to full_retset if no filter or filter condition is satisfied.
-      if (selector == nullptr || selector->is_member(id, filter_data, node.labels())) {
+      if (selector == nullptr || selector->is_member(id, filter_data, node->labels.data())) {
         full_retset.push_back(Neighbor(id, cur_expanded_dist, true));
       }
       return cur_expanded_dist;
@@ -157,14 +106,14 @@ namespace pipeann {
     cand_nbrs.reserve(512);
 
     uint64_t n_computes = 0;
-    auto compute_and_push_nbrs = [&](const DiskOrCachedNode &node, unsigned &nk) {
+    auto compute_and_push_nbrs = [&](const std::shared_ptr<CacheNode<T>> &node, unsigned &nk) {
       unsigned nbors_cand_size = 0;
-      uint32_t node_nnbrs = node.nnbrs();
+      size_t node_nnbrs = node->nbrs.size();
       if (cand_nbrs.size() < node_nnbrs) {
         cand_nbrs.resize(node_nnbrs);
       }
       for (unsigned m = 0; m < node_nnbrs; ++m) {
-        uint32_t nbor = node.nbr(m);
+        uint32_t nbor = node->nbrs[m];
         if (visited.find(nbor) == visited.end()) {
           cand_nbrs[nbors_cand_size++] = nbor;
           visited.insert(nbor);
@@ -276,9 +225,19 @@ namespace pipeann {
       unsigned n_in = 0, n_out = 0;
       while (!on_flight_ios.empty() && on_flight_ios.front().finished()) {
         io_t &io = on_flight_ios.front();
-        DiskNode<T> node = node_from_page((char *) io.read_req->buf, io.loc);
-        id_buf_map.insert(std::make_pair(io.nbr.id, node));
-        put_in_cache(io.nbr.id, node);
+        DiskNode<T> disk_node = node_from_page((char *) io.read_req->buf, io.loc);
+
+        // Convert to CacheNode, put in cache, and store in id_buf_map
+        auto cached_node = std::make_shared<CacheNode<T>>();
+        cached_node->coords.assign(disk_node.coords, disk_node.coords + meta_.data_dim);
+        cached_node->nbrs.assign(disk_node.nbrs, disk_node.nbrs + disk_node.nnbrs);
+        if (meta_.label_size > 0) {
+          char *lbl_ptr = (char *) disk_node.labels;
+          cached_node->labels.assign(lbl_ptr, lbl_ptr + meta_.label_size);
+        }
+        cache.put(io.nbr.id, cached_node);
+        id_buf_map.insert(std::make_pair(io.nbr.id, cached_node));
+
         io.nbr.distance <= retset[cur_list_size - 1].distance ? ++n_in : ++n_out;
         // unlock the corresponding page.
         this->unlock_idx(idx_lock_table, io.nbr.id);
@@ -293,19 +252,19 @@ namespace pipeann {
       while (marker < cur_list_size && n_sent < n) {
         while (marker < cur_list_size /* pool size */ &&
                (retset[marker].flag == false /* on flight */ ||
-                has_node(retset[marker].id) /* already read */)) {
-          retset[marker].flag = false;  // even out the cost to O(1)
+                id_buf_map.find(retset[marker].id) != id_buf_map.end() /* already read */)) {
+          retset[marker].flag = false;  // even out the id_buf_map cost to O(1)
           ++marker;
         }
         if (marker >= cur_list_size) {
           break;  // nothing to send.
         }
 
-        // Try reading from cache first to minimize I/O operations
+        // Try reading from cache first
         unsigned node_id = retset[marker].id;
         std::shared_ptr<CacheNode<T>> cached_node;
         if (cache.get(node_id, cached_node)) {
-          id_cache_map.insert(std::make_pair(node_id, cached_node));
+          id_buf_map.insert(std::make_pair(node_id, cached_node));
           retset[marker].flag = false;
           continue;
         }
@@ -322,10 +281,11 @@ namespace pipeann {
       unsigned marker = 0, nk = cur_list_size, first_unvisited_eager = cur_list_size;
       /* calculate one from "already read" */
       for (marker = 0; marker < cur_list_size; ++marker) {
-        if (!retset[marker].visited && has_node(retset[marker].id)) {
-          retset[marker].flag = false;  // even out the cost to O(1)
+        if (!retset[marker].visited && id_buf_map.find(retset[marker].id) != id_buf_map.end()) {
+          retset[marker].flag = false;  // even out the id_buf_map cost to O(1)
           retset[marker].visited = true;
-          DiskOrCachedNode node = get_node(retset[marker].id);
+          auto it = id_buf_map.find(retset[marker].id);
+          auto &node = it->second;
           compute_exact_dists_and_push(node, retset[marker].id);
           compute_and_push_nbrs(node, nk);
           break;
@@ -335,7 +295,7 @@ namespace pipeann {
       /* guess the first unvisited vector (eager) */
       for (unsigned i = 0; i < cur_list_size; ++i) {
         if (!retset[i].visited && retset[i].flag /* not on-fly */
-            && !has_node(retset[i].id) /* not already read */) {
+            && id_buf_map.find(retset[i].id) == id_buf_map.end() /* not already read */) {
           first_unvisited_eager = i;
           break;
         }
@@ -360,7 +320,7 @@ namespace pipeann {
       LOG(INFO) << "cur_list_size: " << cur_list_size;
       for (unsigned i = 0; i < cur_list_size; ++i) {
         LOG(INFO) << "retset[" << i << "]: " << retset[i].id << ", " << retset[i].distance << ", " << retset[i].flag
-                  << ", " << retset[i].visited << ", " << has_node(retset[i].id);
+                  << ", " << retset[i].visited << ", " << (id_buf_map.find(retset[i].id) != id_buf_map.end());
       }
       LOG(INFO) << "On flight IOs: " << on_flight_ios.size();
       if (on_flight_ios.size() != 0) {
@@ -433,18 +393,29 @@ namespace pipeann {
         reader->poll_all(ctx);
         while (!on_flight_ios.empty() && on_flight_ios.front().finished()) {
           io_t &io = on_flight_ios.front();
-          DiskNode<T> node = node_from_page((char *) io.read_req->buf, io.loc);
-          id_buf_map.insert(std::make_pair(io.nbr.id, node));
-          put_in_cache(io.nbr.id, node);
+          DiskNode<T> disk_node = node_from_page((char *) io.read_req->buf, io.loc);
+
+          // Convert to CacheNode, put in cache, and store in id_buf_map
+          auto cached_node = std::make_shared<CacheNode<T>>();
+          cached_node->coords.assign(disk_node.coords, disk_node.coords + meta_.data_dim);
+          cached_node->nbrs.assign(disk_node.nbrs, disk_node.nbrs + disk_node.nnbrs);
+          if (meta_.label_size > 0) {
+            char *lbl_ptr = (char *) disk_node.labels;
+            cached_node->labels.assign(lbl_ptr, lbl_ptr + meta_.label_size);
+          }
+          cache.put(io.nbr.id, cached_node);
+          id_buf_map.insert(std::make_pair(io.nbr.id, cached_node));
+
           this->unlock_idx(idx_lock_table, io.nbr.id);
           on_flight_ios.pop();
         }
       }
       // Process remaining unvisited nodes in id_buf_map to add to full_retset
       for (unsigned i = 0; i < cur_list_size; ++i) {
-        if (!retset[i].visited && has_node(retset[i].id)) {
+        if (!retset[i].visited && id_buf_map.find(retset[i].id) != id_buf_map.end()) {
           retset[i].visited = true;
-          DiskOrCachedNode node = get_node(retset[i].id);
+          auto it = id_buf_map.find(retset[i].id);
+          auto &node = it->second;
           compute_exact_dists_and_push(node, retset[i].id);
         }
       }

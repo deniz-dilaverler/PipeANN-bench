@@ -27,7 +27,7 @@ template<typename T>
 class ShardedCache {
  private:
   size_t size;
-  std::vector<Shard<T>> shards;
+  std::vector<std::unique_ptr<Shard<T>>> shards;
 
  public:
   ShardedCache(size_t num_shards, size_t shard_capacity);
