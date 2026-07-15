@@ -123,14 +123,14 @@ int search_disk_index(int argc, char **argv) {
                                   stats + i);
       }
     } else if (search_mode == SearchMode::BUDGET_PIPE_SEARCH) {
-      std::atomic<int64_t> used_io_budget(0);
+      pipeann::IOPSBudget iops_budget(total_io_budget);
 #pragma omp parallel for schedule(dynamic, 1)
       for (int64_t i = 0; i < (int64_t) query_num; i++) {
         stats[i].thread_id = omp_get_thread_num();
         _pFlashIndex->budget_pipe_search(query + (i * query_dim), (uint64_t) recall_at, mem_L, (uint64_t) L,
                                          query_result_tags_32.data() + (i * recall_at),
                                          query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth,
-                                         total_io_budget, used_io_budget,
+                                         iops_budget,
                                          stats + i);
       }
     } else if (search_mode == SearchMode::PAGE_SEARCH) {

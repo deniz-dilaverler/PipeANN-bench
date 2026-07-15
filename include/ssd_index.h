@@ -6,6 +6,8 @@
 #include <string>
 #include <set>
 #include <omp.h>
+#include <chrono>
+#include <unistd.h>
 
 #include "aligned_file_reader.h"
 #include "ssd_index_defs.h"
@@ -20,6 +22,46 @@
 enum SearchMode { BEAM_SEARCH = 0, PAGE_SEARCH = 1, PIPE_SEARCH = 2, CORO_SEARCH = 3, BUDGET_PIPE_SEARCH = 4 };
 
 namespace pipeann {
+  struct IOPSBudget {
+    int64_t total_budget;
+    std::atomic<int64_t> current_window_ios;
+    std::atomic<uint64_t> window_start_ms;
+
+    IOPSBudget(int64_t budget = 500000) : total_budget(budget), current_window_ios(0) {
+      window_start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    void check_and_reset_window() {
+      uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      uint64_t start = window_start_ms.load();
+      if (now_ms - start >= 1000) {
+        if (window_start_ms.compare_exchange_strong(start, now_ms)) {
+          current_window_ios.store(0);
+        }
+      }
+    }
+
+    bool request_io(int64_t count) {
+      while (true) {
+        check_and_reset_window();
+        int64_t current_ios = current_window_ios.load();
+        if (current_ios + count > total_budget) {
+          return false;
+        }
+        if (current_window_ios.compare_exchange_weak(current_ios, current_ios + count)) {
+          return true;
+        }
+      }
+    }
+
+    void wait_for_budget(int64_t count) {
+      while (!request_io(count)) {
+        usleep(100);
+      }
+    }
+  };
   template<typename T, typename TagT = uint32_t>
   class SSDIndex {
    public:
@@ -167,7 +209,7 @@ namespace pipeann {
 
     size_t budget_pipe_search(const T *query, const uint64_t k_search, const uint32_t mem_L, const uint64_t l_search,
                               TagT *res_tags, float *res_dists, const uint64_t beam_width,
-                              const int64_t total_io_budget, std::atomic<int64_t> &used_io_budget,
+                              IOPSBudget &iops_budget,
                               QueryStats *stats = nullptr, AbstractSelector *selector = nullptr,
                               const void *filter_data = nullptr, const uint64_t relaxed_monotonicity_l = 0);
 

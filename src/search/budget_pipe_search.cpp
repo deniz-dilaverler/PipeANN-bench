@@ -42,10 +42,9 @@ namespace pipeann {
   template<typename T, typename TagT>
   size_t SSDIndex<T, TagT>::budget_pipe_search(const T *query1, const uint64_t k_search, const uint32_t mem_L,
                                                const uint64_t l_search, TagT *res_tags, float *distances,
-                                               const uint64_t beam_width, const int64_t total_io_budget,
-                                               std::atomic<int64_t> &used_io_budget, QueryStats *stats,
-                                               AbstractSelector *selector, const void *filter_data,
-                                               const uint64_t relaxed_monotonicity_l) {
+                                               const uint64_t beam_width, IOPSBudget &iops_budget,
+                                               QueryStats *stats, AbstractSelector *selector,
+                                               const void *filter_data, const uint64_t relaxed_monotonicity_l) {
     QueryBuffer<T> *query_buf = pop_query_buf(query1);
 #ifdef USE_AIO
     void *ctx = reader->get_ctx();
@@ -161,70 +160,14 @@ namespace pipeann {
     }
     // search in in-memory index.
 
-    auto try_acquire_budget_best_effort = [&](int64_t target_amount, int64_t &acquired_amount) -> bool {
-      int64_t current = used_io_budget.load();
-      while (true) {
-        int64_t allowed = total_io_budget - current;
-        int64_t to_acquire = std::min(target_amount, allowed);
-        if (to_acquire < 1) {
-          acquired_amount = 0;
-          return false;
-        }
-        if (used_io_budget.compare_exchange_weak(current, current + to_acquire)) {
-          acquired_amount = to_acquire;
-          return true;
-        }
-      }
-    };
+    int64_t desired_beam_width = std::min((int64_t)4, (int64_t)beam_width);
+    int64_t cur_beam_width = desired_beam_width;
 
-    auto try_acquire_more_budget = [&](int64_t amount) -> bool {
-      int64_t current = used_io_budget.load();
-      while (true) {
-        if (current + amount > total_io_budget) {
-          return false;
-        }
-        if (used_io_budget.compare_exchange_weak(current, current + amount)) {
-          return true;
-        }
-      }
-    };
-
-    auto release_budget = [&](int64_t amount) {
-      used_io_budget.fetch_sub(amount);
-    };
-
-    int64_t high_budget_threshold = std::min((int64_t)4, (int64_t)beam_width);
-    int64_t cur_beam_width = 0;
-    int64_t acquired_budget = 0;
-    if (try_acquire_budget_best_effort(high_budget_threshold, acquired_budget)) {
-      cur_beam_width = acquired_budget;
-    } else {
-      cur_beam_width = 1;
-      acquired_budget = 0;
+    // Check if budget is in the last 5%, scale cur_beam_width to 3/4th
+    int64_t current_ios = iops_budget.current_window_ios.load();
+    if (current_ios >= iops_budget.total_budget * 95 / 100) {
+      cur_beam_width = std::max((int64_t)1, desired_beam_width * 3 / 4);
     }
-
-    auto release_one_budget = [&]() {
-      if (acquired_budget > 0) {
-        release_budget(1);
-        acquired_budget--;
-      }
-    };
-
-    auto decrease_beam_width = [&]() {
-      if (cur_beam_width > 1) {
-        cur_beam_width--;
-        release_one_budget();
-      }
-    };
-
-    auto increase_beam_width = [&]() {
-      if (cur_beam_width < (int64_t)beam_width) {
-        if (try_acquire_more_budget(1)) {
-          cur_beam_width++;
-          acquired_budget++;
-        }
-      }
-    };
     std::vector<unsigned> mem_tags(mem_L);
     std::vector<float> mem_dists(mem_L);
 
@@ -252,6 +195,9 @@ namespace pipeann {
 
     std::queue<io_t> on_flight_ios;
     auto send_read_req = [&](Neighbor &item) -> bool {
+      // Throttle: wait for budget
+      iops_budget.wait_for_budget(1);
+
       item.flag = false;
 
       // lock the corresponding page.
@@ -383,11 +329,12 @@ namespace pipeann {
 
     int cur_n_in = 0, cur_tot = 0;
     while (get_first_unvisited() != -1) {
-      // If the budget is currently fully used, high budget using threads should reduce their usage
-      if (used_io_budget.load() >= total_io_budget) {
-        if (cur_beam_width > 1) {
-          decrease_beam_width();
-        }
+      // Dynamic budget check to set cur_beam_width
+      int64_t current_ios_rate = iops_budget.current_window_ios.load();
+      if (current_ios_rate >= iops_budget.total_budget * 95 / 100) {
+        cur_beam_width = std::max((int64_t)1, desired_beam_width * 3 / 4);
+      } else {
+        cur_beam_width = desired_beam_width;
       }
 
       // poll to heap (best-effort) -> calc best from heap (skip if heap is empty) -> send IO (if can send) -> ...
@@ -402,11 +349,13 @@ namespace pipeann {
         // converged, tune beam width.
         constexpr double kWasteThreshold = 0.1;  // 0.1 * 10
         if ((cur_tot - cur_n_in) * 1.0 / cur_tot <= kWasteThreshold) {
-          // If needed, try to increase usage
-          increase_beam_width();
+          if (desired_beam_width < (int64_t) beam_width) {
+            desired_beam_width++;
+          }
         } else {
-          // Exceeded waste threshold, reduce usage (normally does)
-          decrease_beam_width();
+          if (desired_beam_width > 4) {
+            desired_beam_width--;
+          }
         }
 
         // In ensure_enough_results mode: record converge_size when first converged
@@ -473,9 +422,7 @@ namespace pipeann {
       t++;
     }
 
-    if (acquired_budget > 0) {
-      release_budget(acquired_budget);
-    }
+    // No cleanup required since budget is not held across calls
 
     push_query_buf(query_buf);
 
