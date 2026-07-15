@@ -1,3 +1,4 @@
+#include <atomic>
 #include "aligned_file_reader.h"
 #include "utils/libcuckoo/cuckoohash_map.hh"
 #include "ssd_index.h"
@@ -39,10 +40,12 @@ namespace pipeann {
   };
 
   template<typename T, typename TagT>
-  size_t SSDIndex<T, TagT>::pipe_search(const T *query1, const uint64_t k_search, const uint32_t mem_L,
-                                        const uint64_t l_search, TagT *res_tags, float *distances,
-                                        const uint64_t beam_width, QueryStats *stats, AbstractSelector *selector,
-                                        const void *filter_data, const uint64_t relaxed_monotonicity_l) {
+  size_t SSDIndex<T, TagT>::budget_pipe_search(const T *query1, const uint64_t k_search, const uint32_t mem_L,
+                                               const uint64_t l_search, TagT *res_tags, float *distances,
+                                               const uint64_t beam_width, const int64_t total_io_budget,
+                                               std::atomic<int64_t> &used_io_budget, QueryStats *stats,
+                                               AbstractSelector *selector, const void *filter_data,
+                                               const uint64_t relaxed_monotonicity_l) {
     QueryBuffer<T> *query_buf = pop_query_buf(query1);
 #ifdef USE_AIO
     void *ctx = reader->get_ctx();
@@ -158,7 +161,70 @@ namespace pipeann {
     }
     // search in in-memory index.
 
-    int64_t cur_beam_width = std::min(4ul, beam_width);  // before converge.
+    auto try_acquire_budget_best_effort = [&](int64_t target_amount, int64_t &acquired_amount) -> bool {
+      int64_t current = used_io_budget.load();
+      while (true) {
+        int64_t allowed = total_io_budget - current;
+        int64_t to_acquire = std::min(target_amount, allowed);
+        if (to_acquire < 1) {
+          acquired_amount = 0;
+          return false;
+        }
+        if (used_io_budget.compare_exchange_weak(current, current + to_acquire)) {
+          acquired_amount = to_acquire;
+          return true;
+        }
+      }
+    };
+
+    auto try_acquire_more_budget = [&](int64_t amount) -> bool {
+      int64_t current = used_io_budget.load();
+      while (true) {
+        if (current + amount > total_io_budget) {
+          return false;
+        }
+        if (used_io_budget.compare_exchange_weak(current, current + amount)) {
+          return true;
+        }
+      }
+    };
+
+    auto release_budget = [&](int64_t amount) {
+      used_io_budget.fetch_sub(amount);
+    };
+
+    int64_t high_budget_threshold = std::min((int64_t)4, (int64_t)beam_width);
+    int64_t cur_beam_width = 0;
+    int64_t acquired_budget = 0;
+    if (try_acquire_budget_best_effort(high_budget_threshold, acquired_budget)) {
+      cur_beam_width = acquired_budget;
+    } else {
+      cur_beam_width = 1;
+      acquired_budget = 0;
+    }
+
+    auto release_one_budget = [&]() {
+      if (acquired_budget > 0) {
+        release_budget(1);
+        acquired_budget--;
+      }
+    };
+
+    auto decrease_beam_width = [&]() {
+      if (cur_beam_width > 1) {
+        cur_beam_width--;
+        release_one_budget();
+      }
+    };
+
+    auto increase_beam_width = [&]() {
+      if (cur_beam_width < (int64_t)beam_width) {
+        if (try_acquire_more_budget(1)) {
+          cur_beam_width++;
+          acquired_budget++;
+        }
+      }
+    };
     std::vector<unsigned> mem_tags(mem_L);
     std::vector<float> mem_dists(mem_L);
 
@@ -317,6 +383,13 @@ namespace pipeann {
 
     int cur_n_in = 0, cur_tot = 0;
     while (get_first_unvisited() != -1) {
+      // If the budget is currently fully used, high budget using threads should reduce their usage
+      if (used_io_budget.load() >= total_io_budget) {
+        if (cur_beam_width > 1) {
+          decrease_beam_width();
+        }
+      }
+
       // poll to heap (best-effort) -> calc best from heap (skip if heap is empty) -> send IO (if can send) -> ...
       auto io1_st = std::chrono::high_resolution_clock::now();
       auto [n_in, n_out] = poll_all();
@@ -329,9 +402,11 @@ namespace pipeann {
         // converged, tune beam width.
         constexpr double kWasteThreshold = 0.1;  // 0.1 * 10
         if ((cur_tot - cur_n_in) * 1.0 / cur_tot <= kWasteThreshold) {
-          cur_beam_width = cur_beam_width + 1;
-          cur_beam_width = std::max(cur_beam_width, 4l);
-          cur_beam_width = std::min((int64_t) beam_width, cur_beam_width);
+          // If needed, try to increase usage
+          increase_beam_width();
+        } else {
+          // Exceeded waste threshold, reduce usage (normally does)
+          decrease_beam_width();
         }
 
         // In ensure_enough_results mode: record converge_size when first converged
@@ -396,6 +471,10 @@ namespace pipeann {
         distances[t] = full_retset[i].distance;
       }
       t++;
+    }
+
+    if (acquired_budget > 0) {
+      release_budget(acquired_budget);
     }
 
     push_query_buf(query_buf);

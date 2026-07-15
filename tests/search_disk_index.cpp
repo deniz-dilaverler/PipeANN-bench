@@ -1,6 +1,7 @@
 #include <cstring>
 #include <map>
 #include <omp.h>
+#include <atomic>
 #include <ssd_index.h>
 #include <string.h>
 #include <time.h>
@@ -40,6 +41,10 @@ int search_disk_index(int argc, char **argv) {
   int search_mode = std::atoi(argv[index++]);
   bool use_page_search = search_mode != 0;
   uint32_t mem_L = std::atoi(argv[index++]);
+  int64_t total_io_budget = 0;
+  if (search_mode == SearchMode::BUDGET_PIPE_SEARCH) {
+    total_io_budget = std::atoll(argv[index++]);
+  }
 
   pipeann::Metric m = pipeann::get_metric(dist_metric);
 
@@ -116,6 +121,17 @@ int search_disk_index(int argc, char **argv) {
                                   query_result_tags_32.data() + (i * recall_at),
                                   query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth,
                                   stats + i);
+      }
+    } else if (search_mode == SearchMode::BUDGET_PIPE_SEARCH) {
+      std::atomic<int64_t> used_io_budget(0);
+#pragma omp parallel for schedule(dynamic, 1)
+      for (int64_t i = 0; i < (int64_t) query_num; i++) {
+        stats[i].thread_id = omp_get_thread_num();
+        _pFlashIndex->budget_pipe_search(query + (i * query_dim), (uint64_t) recall_at, mem_L, (uint64_t) L,
+                                         query_result_tags_32.data() + (i * recall_at),
+                                         query_result_dists[test_id].data() + (i * recall_at), (uint64_t) beamwidth,
+                                         total_io_budget, used_io_budget,
+                                         stats + i);
       }
     } else if (search_mode == SearchMode::PAGE_SEARCH) {
 #pragma omp parallel for schedule(dynamic, 1)
@@ -209,8 +225,9 @@ int search_disk_index(int argc, char **argv) {
       }
       std::cout << "\n  --- Per-Thread Statistics (L=" << L << ") ---" << std::endl;
       std::cout << "  " << std::setw(10) << "Thread ID" << std::setw(15) << "Num Queries"
-                << std::setw(12) << "AvgLat(us)" << std::setw(12) << "P99 Lat"
-                << std::setw(15) << "AvgIOLat(us)" << std::setw(12) << "P95 IOLat" << std::setw(12) << "P99 IOLat" << std::setw(12) << "P999 IOLat"
+                << std::setw(12) << "AvgLat(us)" << std::setw(14) << "P99 Lat(us)"
+                << std::setw(15) << "Avg(io_sub_us)" << std::setw(15) << "P95(io_sub_us)" << std::setw(15) << "P99(io_sub_us)" << std::setw(16) << "P999(io_sub_us)"
+                << std::setw(16) << "Avg(io_all_us)" << std::setw(16) << "P95(io_all_us)" << std::setw(16) << "P99(io_all_us)" << std::setw(16) << "P999(io_all_us)"
                 << std::setw(15) << "AvgIOCount" << std::setw(12) << "P95 IOCnt" << std::setw(12) << "P99 IOCnt" << std::setw(12) << "P999 IOCnt" << std::endl;
       for (auto& [tid, t_stats] : thread_stats) {
         float t_mean_latency = (float) pipeann::get_mean_stats(
@@ -218,14 +235,23 @@ int search_disk_index(int argc, char **argv) {
         float t_latency_99 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.total_us; });
 
-        float t_mean_io_latency = (float) pipeann::get_mean_stats(
+        float t_mean_io_sub = (float) pipeann::get_mean_stats(
             t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.io_us; });
-        float t_latency_io_95 = (float) pipeann::get_percentile_stats(
+        float t_io_sub_95 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.95f, [](const pipeann::QueryStats &s) { return s.io_us; });
-        float t_latency_io_99 = (float) pipeann::get_percentile_stats(
+        float t_io_sub_99 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.io_us; });
-        float t_latency_io_999 = (float) pipeann::get_percentile_stats(
+        float t_io_sub_999 = (float) pipeann::get_percentile_stats(
             t_stats.data(), t_stats.size(), 0.999f, [](const pipeann::QueryStats &s) { return s.io_us; });
+
+        float t_mean_io_all = (float) pipeann::get_mean_stats(
+            t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.io_us1; });
+        float t_io_all_95 = (float) pipeann::get_percentile_stats(
+            t_stats.data(), t_stats.size(), 0.95f, [](const pipeann::QueryStats &s) { return s.io_us1; });
+        float t_io_all_99 = (float) pipeann::get_percentile_stats(
+            t_stats.data(), t_stats.size(), 0.99f, [](const pipeann::QueryStats &s) { return s.io_us1; });
+        float t_io_all_999 = (float) pipeann::get_percentile_stats(
+            t_stats.data(), t_stats.size(), 0.999f, [](const pipeann::QueryStats &s) { return s.io_us1; });
 
         float t_mean_io_count = (float) pipeann::get_mean_stats(
             t_stats.data(), t_stats.size(), [](const pipeann::QueryStats &s) { return s.n_ios; });
@@ -237,8 +263,9 @@ int search_disk_index(int argc, char **argv) {
             t_stats.data(), t_stats.size(), 0.999f, [](const pipeann::QueryStats &s) { return s.n_ios; });
 
         std::cout << "  " << std::setw(10) << tid << std::setw(15) << t_stats.size()
-                  << std::setw(12) << t_mean_latency << std::setw(12) << t_latency_99
-                  << std::setw(15) << t_mean_io_latency << std::setw(12) << t_latency_io_95 << std::setw(12) << t_latency_io_99 << std::setw(12) << t_latency_io_999
+                  << std::setw(12) << t_mean_latency << std::setw(14) << t_latency_99
+                  << std::setw(15) << t_mean_io_sub << std::setw(15) << t_io_sub_95 << std::setw(15) << t_io_sub_99 << std::setw(16) << t_io_sub_999
+                  << std::setw(16) << t_mean_io_all << std::setw(16) << t_io_all_95 << std::setw(16) << t_io_all_99 << std::setw(16) << t_io_all_999
                   << std::setw(15) << t_mean_io_count << std::setw(12) << t_io_count_95 << std::setw(12) << t_io_count_99 << std::setw(12) << t_io_count_999 << std::endl;
       }
       std::cout << "  --------------------------------------------------------------------------\n" << std::endl;
@@ -277,15 +304,22 @@ int search_disk_index(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 12) {
+  bool is_budget_mode = false;
+  if (argc >= 11 && std::atoi(argv[10]) == 4) {
+    is_budget_mode = true;
+  }
+
+  if (argc < (is_budget_mode ? 13 : 12)) {
     // tags == 1!
     std::cout << "Usage: " << argv[0]
               << " <index_type (float/int8/uint8)>  <index_prefix_path>"
                  " <num_threads>  <pipeline width> "
                  " <query_file.bin>  <truthset.bin (use \"null\" for none)> "
                  " <K> <similarity (cosine/l2/mips)> <nbr_type (pq/rabitq)>"
-                 " <search_mode(0 for beam search / 1 for page search / 2 for pipe search)> <mem_L (0 means not "
-                 "using mem index)> <L1> [L2] etc."
+                 " <search_mode(0 for beam search / 1 for page search / 2 for pipe search / 4 for budget pipe search)> <mem_L (0 means not "
+                 "using mem index)> "
+              << (is_budget_mode ? "<total_io_budget> " : "")
+              << "<L1> [L2] etc."
               << std::endl;
     exit(-1);
   }

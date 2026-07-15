@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <immintrin.h>
 #include <cassert>
 #include <cstdint>
@@ -16,7 +17,7 @@
 #include "utils.h"
 #include "index.h"
 
-enum SearchMode { BEAM_SEARCH = 0, PAGE_SEARCH = 1, PIPE_SEARCH = 2, CORO_SEARCH = 3 };
+enum SearchMode { BEAM_SEARCH = 0, PAGE_SEARCH = 1, PIPE_SEARCH = 2, CORO_SEARCH = 3, BUDGET_PIPE_SEARCH = 4 };
 
 namespace pipeann {
   template<typename T, typename TagT = uint32_t>
@@ -163,6 +164,12 @@ namespace pipeann {
                        TagT *res_tags, float *res_dists, const uint64_t beam_width, QueryStats *stats = nullptr,
                        AbstractSelector *selector = nullptr, const void *filter_data = nullptr,
                        const uint64_t relaxed_monotonicity_l = 0);
+
+    size_t budget_pipe_search(const T *query, const uint64_t k_search, const uint32_t mem_L, const uint64_t l_search,
+                              TagT *res_tags, float *res_dists, const uint64_t beam_width,
+                              const int64_t total_io_budget, std::atomic<int64_t> &used_io_budget,
+                              QueryStats *stats = nullptr, AbstractSelector *selector = nullptr,
+                              const void *filter_data = nullptr, const uint64_t relaxed_monotonicity_l = 0);
 
     int insert_in_place(const T *point, const TagT &tag, tsl::robin_set<uint32_t> *deletion_set = nullptr);
 
