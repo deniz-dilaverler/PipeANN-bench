@@ -220,17 +220,8 @@ int search_disk_index(int argc, char **argv) {
       }
 
       std::map<uint32_t, std::vector<pipeann::QueryStats>> thread_stats;
-      for (size_t i = 0; i < query_num; ++i) {
-        thread_stats[stats[i].thread_id].push_back(stats[i]);
-      }
-      std::cout << "\n  --- Statistics (L=" << L << ") ---" << std::endl;
-      std::cout << "  " << std::setw(10) << "Thread ID" << std::setw(15) << "Num Queries"
-                << std::setw(12) << "AvgLat(us)" << std::setw(14) << "P99 Lat(us)"
-                << std::setw(15) << "Avg(io_sub_us)" << std::setw(15) << "P95(io_sub_us)" << std::setw(15) << "P99(io_sub_us)" << std::setw(16) << "P999(io_sub_us)"
-                << std::setw(16) << "Avg(io_all_us)" << std::setw(16) << "P95(io_all_us)" << std::setw(16) << "P99(io_all_us)" << std::setw(16) << "P999(io_all_us)"
-                << std::setw(15) << "AvgIOCount" << std::setw(12) << "P95 IOCnt" << std::setw(12) << "P99 IOCnt" << std::setw(12) << "P999 IOCnt" << std::endl;
 
-    }
+          }
 
     delete[] stats;
   };
