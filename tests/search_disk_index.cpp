@@ -1,4 +1,5 @@
 #include <cstring>
+#include <fstream>
 #include <omp.h>
 #include <ssd_index.h>
 #include <string.h>
@@ -45,8 +46,22 @@ int search_disk_index(int argc, char **argv) {
   std::string disk_index_tag_file = index_prefix_path + "_disk.index.tags";
 
   bool calc_recall_flag = false;
+  std::string csv_path = "search_disk_index_results.csv";
 
   for (int ctr = index; ctr < argc; ctr++) {
+    std::string arg(argv[ctr]);
+    if (arg == "--csv") {
+      if (ctr + 1 >= argc || argv[ctr + 1][0] == '\0' || std::string(argv[ctr + 1]).rfind("--", 0) == 0) {
+        std::cerr << "--csv requires an output file path" << std::endl;
+        return -1;
+      }
+      csv_path = argv[++ctr];
+      continue;
+    }
+    if (arg.rfind("--", 0) == 0) {
+      std::cerr << "Unknown option: " << arg << std::endl;
+      return -1;
+    }
     uint64_t curL = std::atoi(argv[ctr]);
     if (curL >= recall_at)
       Lvec.push_back(curL);
@@ -56,6 +71,13 @@ int search_disk_index(int argc, char **argv) {
     std::cout << "No valid Lsearch found. Lsearch must be at least recall_at" << std::endl;
     return -1;
   }
+
+  std::ofstream csv(csv_path);
+  if (!csv) {
+    std::cerr << "Failed to open CSV output file: " << csv_path << std::endl;
+    return -1;
+  }
+  csv << std::fixed << std::setprecision(2);
 
   std::cout << "Search parameters: #threads: " << num_threads << ", ";
   if (beamwidth <= 0)
@@ -164,6 +186,12 @@ int search_disk_index(int argc, char **argv) {
     float mean_latency = (float) pipeann::get_mean_stats(
         stats, query_num, [](const pipeann::QueryStats &stats) { return stats.total_us; });
 
+    float latency_95 = (float) pipeann::get_percentile_stats(
+        stats, query_num, 0.95f, [](const pipeann::QueryStats &stats) { return stats.total_us; });
+
+    float latency_99 = (float) pipeann::get_percentile_stats(
+        stats, query_num, 0.99f, [](const pipeann::QueryStats &stats) { return stats.total_us; });
+
     float latency_999 = (float) pipeann::get_percentile_stats(
         stats, query_num, 0.999f, [](const pipeann::QueryStats &stats) { return stats.total_us; });
 
@@ -186,11 +214,16 @@ int search_disk_index(int argc, char **argv) {
       }
 
       std::cout << std::setw(6) << L << std::setw(12) << beamwidth << std::setw(12) << qps << std::setw(12)
-                << mean_latency << std::setw(12) << latency_999 << std::setw(12) << mean_hops << std::setw(12)
-                << mean_ios;
+                << mean_latency << std::setw(12) << latency_95 << std::setw(12) << latency_99 << std::setw(12)
+                << latency_999 << std::setw(12) << mean_hops << std::setw(12) << mean_ios;
+      csv << L << ',' << beamwidth << ',' << qps << ',' << mean_latency << ',' << latency_95 << ',' << latency_99
+          << ',' << latency_999 << ',' << mean_hops << ',' << mean_ios;
       if (calc_recall_flag) {
-        std::cout << std::setw(12) << recall << std::endl;
+        std::cout << std::setw(12) << recall;
+        csv << ',' << recall;
       }
+      std::cout << std::endl;
+      csv << std::endl;
     }
   };
 
@@ -206,25 +239,43 @@ int search_disk_index(int argc, char **argv) {
   std::cout.precision(2);
 
   std::string recall_string = "Recall@" + std::to_string(recall_at);
+  csv << "L,io_width,qps,avg_latency_us,p95_latency_us,p99_latency_us,p999_latency_us,mean_hops,mean_ios";
+  if (calc_recall_flag) {
+    csv << ',' << recall_string;
+  }
+  csv << std::endl;
+  if (!csv) {
+    std::cerr << "Failed to write CSV output file: " << csv_path << std::endl;
+    return -1;
+  }
+
   std::cout << std::setw(6) << "L" << std::setw(12) << "I/O Width" << std::setw(12) << "QPS" << std::setw(12)
-            << "AvgLat(us)" << std::setw(12) << "P99 Lat" << std::setw(12) << "Mean Hops" << std::setw(12) << "Mean IOs"
-            << std::setw(12);
+            << "AvgLat(us)" << std::setw(12) << "P95 Lat" << std::setw(12) << "P99 Lat" << std::setw(12)
+            << "P99.9 Lat" << std::setw(12) << "Mean Hops" << std::setw(12) << "Mean IOs";
   if (calc_recall_flag) {
     std::cout << std::setw(12) << recall_string << std::endl;
   } else
     std::cout << std::endl;
-  std::cout << "=============================================="
-               "==========================================="
-            << std::endl;
+  std::cout << std::string(6 + 12 * (calc_recall_flag ? 9 : 8), '=') << std::endl;
 
   for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++) {
     run_tests(test_id, true);
+    if (!csv) {
+      std::cerr << "Failed to write CSV output file: " << csv_path << std::endl;
+      return -1;
+    }
   }
+  csv.close();
+  if (!csv) {
+    std::cerr << "Failed to finish CSV output file: " << csv_path << std::endl;
+    return -1;
+  }
+  std::cout << "Results saved to " << csv_path << std::endl;
   return 0;
 }
 
 int main(int argc, char **argv) {
-  if (argc < 12) {
+  if (argc < 13) {
     // tags == 1!
     std::cout << "Usage: " << argv[0]
               << " <index_type (float/int8/uint8)>  <index_prefix_path>"
@@ -232,17 +283,20 @@ int main(int argc, char **argv) {
                  " <query_file.bin>  <truthset.bin (use \"null\" for none)> "
                  " <K> <similarity (cosine/l2/mips)> <nbr_type (pq/rabitq)>"
                  " <search_mode(0 for beam search / 1 for page search / 2 for pipe search)> <mem_L (0 means not "
-                 "using mem index)> <L1> [L2] etc."
+                 "using mem index)> <L1> [L2] ... [--csv <output.csv>]"
+              << std::endl
+              << "CSV output defaults to search_disk_index_results.csv (overwritten each run)."
               << std::endl;
     exit(-1);
   }
 
   if (std::string(argv[1]) == std::string("float"))
-    search_disk_index<float>(argc, argv);
+    return search_disk_index<float>(argc, argv);
   else if (std::string(argv[1]) == std::string("int8"))
-    search_disk_index<int8_t>(argc, argv);
+    return search_disk_index<int8_t>(argc, argv);
   else if (std::string(argv[1]) == std::string("uint8"))
-    search_disk_index<uint8_t>(argc, argv);
+    return search_disk_index<uint8_t>(argc, argv);
   else
     std::cout << "Unsupported index type. Use float or int8 or uint8" << std::endl;
+  return -1;
 }
