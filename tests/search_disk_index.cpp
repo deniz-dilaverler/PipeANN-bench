@@ -1,4 +1,5 @@
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <omp.h>
 #include <ssd_index.h>
@@ -46,7 +47,7 @@ int search_disk_index(int argc, char **argv) {
   std::string disk_index_tag_file = index_prefix_path + "_disk.index.tags";
 
   bool calc_recall_flag = false;
-  std::string csv_path = "search_disk_index_results_threads_" + std::to_string(num_threads) + "_beam_" +
+  std::string csv_path = "results/search_disk_index_results_threads_" + std::to_string(num_threads) + "_beam_" +
                          std::to_string(beamwidth) + ".csv";
 
   for (int ctr = index; ctr < argc; ctr++) {
@@ -71,6 +72,17 @@ int search_disk_index(int argc, char **argv) {
   if (Lvec.size() == 0) {
     std::cout << "No valid Lsearch found. Lsearch must be at least recall_at" << std::endl;
     return -1;
+  }
+
+  const auto csv_dir = std::filesystem::path(csv_path).parent_path();
+  if (!csv_dir.empty()) {
+    std::error_code error;
+    std::filesystem::create_directories(csv_dir, error);
+    if (error) {
+      std::cerr << "Failed to create CSV output directory: " << csv_dir.string() << ": " << error.message()
+                << std::endl;
+      return -1;
+    }
   }
 
   std::ofstream csv(csv_path);
@@ -286,8 +298,8 @@ int main(int argc, char **argv) {
                  " <search_mode(0 for beam search / 1 for page search / 2 for pipe search)> <mem_L (0 means not "
                  "using mem index)> <L1> [L2] ... [--csv <output.csv>]"
               << std::endl
-              << "CSV output defaults to search_disk_index_results_threads_<num_threads>_beam_<beam_width>.csv "
-                 "(overwritten each run)."
+              << "CSV output defaults to results/search_disk_index_results_threads_<num_threads>_beam_<beam_width>.csv "
+                 "(overwritten each run). Missing output directories are created automatically."
               << std::endl;
     exit(-1);
   }
