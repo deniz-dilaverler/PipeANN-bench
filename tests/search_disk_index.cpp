@@ -46,7 +46,8 @@ int search_disk_index(int argc, char **argv) {
   std::string disk_index_tag_file = index_prefix_path + "_disk.index.tags";
 
   bool calc_recall_flag = false;
-  std::string csv_path = "search_disk_index_results.csv";
+  std::string csv_path = "search_disk_index_results_threads_" + std::to_string(num_threads) + "_beam_" +
+                         std::to_string(beamwidth) + ".csv";
 
   for (int ctr = index; ctr < argc; ctr++) {
     std::string arg(argv[ctr]);
@@ -285,7 +286,8 @@ int main(int argc, char **argv) {
                  " <search_mode(0 for beam search / 1 for page search / 2 for pipe search)> <mem_L (0 means not "
                  "using mem index)> <L1> [L2] ... [--csv <output.csv>]"
               << std::endl
-              << "CSV output defaults to search_disk_index_results.csv (overwritten each run)."
+              << "CSV output defaults to search_disk_index_results_threads_<num_threads>_beam_<beam_width>.csv "
+                 "(overwritten each run)."
               << std::endl;
     exit(-1);
   }
