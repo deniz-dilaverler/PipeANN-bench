@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <queue>
+#include <stdexcept>
 #include <stdlib.h>
 
 #include "omp.h"
@@ -45,7 +46,7 @@ void exact_knn(const size_t dim, const size_t k,
   std::cout << "Going to compute " << k << " NNs for " << nqueries << " queries over " << npoints << " points in "
             << dim << " dimensions using " << pipeann::get_metric_str(metric) << std::endl;
 
-  size_t q_batch_size = (1 << 9);
+  size_t q_batch_size = std::min(nqueries, size_t(1 << 9));
   // bulk_compare(queries_batch, batch_size, points, npoints, dim, dist_matrix) produces
   // dist_matrix[q_local * npoints + p], which matches the col-major access dist_matrix[p + q_local * npoints].
   float *dist_matrix = new float[(size_t) q_batch_size * (size_t) npoints];
@@ -79,33 +80,58 @@ void exact_knn(const size_t dim, const size_t k,
 
   delete[] dist_matrix;
   delete distance;
+}
 
-  if (metric == pipeann::Metric::COSINE) {
-    delete[] points_in;
-    delete[] queries_in;
+inline void read_bin_header(std::ifstream &reader, const char *filename, size_t &npts, size_t &ndims) {
+  int32_t npts_i32 = 0, ndims_i32 = 0;
+  reader.read(reinterpret_cast<char *>(&npts_i32), sizeof(npts_i32));
+  reader.read(reinterpret_cast<char *>(&ndims_i32), sizeof(ndims_i32));
+  if (!reader || npts_i32 <= 0 || ndims_i32 <= 0) {
+    throw std::runtime_error(std::string("Cannot read a valid bin header from ") + filename);
   }
+  npts = static_cast<size_t>(npts_i32);
+  ndims = static_cast<size_t>(ndims_i32);
 }
 
 template<typename T>
 inline int get_num_parts(const char *filename) {
   std::ifstream reader(filename, std::ios::binary);
   std::cout << "Reading bin file " << filename << " ...\n";
-  int npts_i32, ndims_i32;
-  reader.read((char *) &npts_i32, sizeof(int));
-  reader.read((char *) &ndims_i32, sizeof(int));
-  std::cout << "#pts = " << npts_i32 << ", #dims = " << ndims_i32 << std::endl;
+  size_t npts, ndims;
+  read_bin_header(reader, filename, npts, ndims);
+  std::cout << "#pts = " << npts << ", #dims = " << ndims << std::endl;
   reader.close();
-  uint32_t num_parts = (npts_i32 % PARTSIZE) == 0 ? (uint32_t) (npts_i32 / PARTSIZE)
-                                                  : (uint32_t) std::floor((double) npts_i32 / (double) PARTSIZE) + 1;
+  uint32_t num_parts = DIV_ROUND_UP(npts, PARTSIZE);
   std::cout << "Number of parts: " << num_parts << std::endl;
   return num_parts;
 }
 
 template<typename T>
-inline void load_bin_as_float(const char *filename, float *&data, size_t &npts, size_t &ndims, int part_num) {
-  std::vector<T> data_vec;
-  pipeann::load_bin<T>(filename, data_vec, npts, ndims, part_num * PARTSIZE);
-  pipeann::alloc_aligned((void **) &data, npts * ndims * sizeof(float), ALIGNMENT);
+inline void load_bin_as_float(const char *filename, float *&data, size_t &npts, size_t &ndims, size_t part_num,
+                              size_t max_points = PARTSIZE) {
+  std::ifstream reader(filename, std::ios::binary | std::ios::ate);
+  const auto file_size = reader.tellg();
+  reader.seekg(0);
+  size_t total_points;
+  read_bin_header(reader, filename, total_points, ndims);
+  const size_t header_size = 2 * sizeof(int32_t);
+  // load_bin's offset locates another header, not a row within this file.
+  const size_t start_point = part_num * size_t(PARTSIZE);
+  if (start_point >= total_points || max_points == 0) {
+    throw std::runtime_error(std::string("Invalid bin part requested from ") + filename);
+  }
+  npts = std::min(max_points, total_points - start_point);
+  const size_t row_bytes = ndims * sizeof(T);
+  if (file_size < std::streamoff(header_size) ||
+      total_points > (static_cast<uint64_t>(file_size) - header_size) / row_bytes) {
+    throw std::runtime_error(std::string("Truncated bin data in ") + filename);
+  }
+  reader.seekg(header_size + start_point * row_bytes);
+  std::vector<T> data_vec(npts * ndims);
+  if (!reader.read(reinterpret_cast<char *>(data_vec.data()), npts * row_bytes)) {
+    throw std::runtime_error(std::string("Cannot read bin part from ") + filename);
+  }
+  pipeann::alloc_aligned((void **) &data, ROUND_UP(npts * ndims * sizeof(float), ALIGNMENT), ALIGNMENT);
   pipeann::convert_types<T, float>(data_vec.data(), data, npts, ndims);
   std::cout << "Finished converting part data to float." << std::endl;
 }
@@ -177,7 +203,7 @@ int aux_main(int argc, char **argv, pipeann::Metric metric, pipeann::AbstractSel
   float *query_data;
 
   int num_parts = get_num_parts<T>(base_file.c_str());
-  load_bin_as_float<T>(query_file.c_str(), query_data, nqueries, dim, 0);
+  load_bin_as_float<T>(query_file.c_str(), query_data, nqueries, dim, 0, std::numeric_limits<size_t>::max());
 
   if (metric == pipeann::Metric::COSINE) {  // we convert cosine distance as normalized L2/IP distance.
     for (uint64_t i = 0; i < nqueries; i++) {
@@ -193,7 +219,7 @@ int aux_main(int argc, char **argv, pipeann::Metric metric, pipeann::AbstractSel
   float *dist_closest_points = new float[nqueries * k];
 
   for (int p = 0; p < num_parts; p++) {
-    size_t start_id = p * PARTSIZE;
+    size_t start_id = size_t(p) * PARTSIZE;
     load_bin_as_float<T>(base_file.c_str(), base_data, npoints, dim, p);
     if (metric == pipeann::Metric::COSINE) {
       for (uint64_t i = 0; i < npoints; i++) {
@@ -203,16 +229,17 @@ int aux_main(int argc, char **argv, pipeann::Metric metric, pipeann::AbstractSel
 
     if (selector == nullptr) {
       // No filtering: use fast batch KNN
-      int *closest_points_part = new int[nqueries * k];
-      float *dist_closest_points_part = new float[nqueries * k];
+      const size_t part_k = std::min(k, npoints);
+      int *closest_points_part = new int[nqueries * part_k];
+      float *dist_closest_points_part = new float[nqueries * part_k];
 
-      exact_knn(dim, k, closest_points_part, dist_closest_points_part, npoints, base_data, nqueries, query_data,
+      exact_knn(dim, part_k, closest_points_part, dist_closest_points_part, npoints, base_data, nqueries, query_data,
                 metric);
 
       for (uint64_t i = 0; i < nqueries; i++) {
-        for (uint64_t j = 0; j < k; j++) {
-          results[i].push_back(std::make_pair((uint32_t) (closest_points_part[i * k + j] + start_id),
-                                              dist_closest_points_part[i * k + j]));
+        for (uint64_t j = 0; j < part_k; j++) {
+          results[i].push_back(std::make_pair((uint32_t) (closest_points_part[i * part_k + j] + start_id),
+                                              dist_closest_points_part[i * part_k + j]));
         }
       }
 
